@@ -1,0 +1,107 @@
+function [ Histograms, Anew, inters ] = VoronoiMonteCarlo3D( A, BW, iter, signif, Sgauss, Zext )
+%UNTITLED Summary of this function goes here
+%   Sgauss = std of the gaussian for Z random distibution
+% Nbin and lim (line 19,20) can be adjusted to better represent the
+% distributions
+
+if ~exist('Sgauss', 'var')
+    Sgauss = 0;
+end
+
+if ~exist('Zext', 'var')
+    Zext = 1200;
+end
+
+fov = FOV(A);
+p = fov/size(BW,1);% pixel size of the mask in nm
+% cutting the eventlist
+Anew = parroifilter(A, BW, 1, p);
+Voronoi = VorArea3D( Anew );
+S = 1./Voronoi{1};
+%figure; hist(Voronoi{1}(Voronoi{1}<5*median(Voronoi{1}(Voronoi{1}<Inf))),round(2*(length(Voronoi{1}))^(1/3)));
+%
+%Sr = zeros(size(S,1),iter);
+% monte-carlo
+if iter > 0
+    h = waitbar(0, 'Voronoi Monte Carlo simulation');
+    z = norminv(1-(100-signif)*0.01/2); % z for given significance level (signif %)
+    for j = 1:iter
+        Ar = zeros(round((fov*fov) * size(Anew,1) / (bwarea(BW) * p^2)), 9);
+        Ar(:,4:5) = rand(size(Ar, 1), 2) * fov;
+        if Sgauss == 0
+            Ar(:,6) = rand(size(Ar, 1), 1) * Zext - Zext/2;
+        else
+            R = normrnd(0, Sgauss, [round(1/(normcdf(Zext/2, 0, Sgauss) - normcdf(-Zext/2, 0, Sgauss))*size(Ar,1)), 1]);
+            R(R<-Zext/2|R>Zext/2) = [];
+            if size(R,1) >= size(Ar,1)
+                R = R(1:size(Ar,1));
+            else
+                while size(R,1) < size(Ar,1)
+                    rn = normrnd(0,Sgauss);
+                    if rn >= -Zext/2 || rn<= Zext/2
+                        R = [R; rn];
+                    end
+                end
+            end
+            Ar(:,6) = R;
+        end
+        Anewr = parroifilter(Ar, BW, 1, p);
+        Voronoi_r = VorArea3D( Anewr );
+        Sr{j} = 1./Voronoi_r{1};
+        waitbar(j/iter, h, 'Voronoi Monte Carlo simulation');
+    end
+Nbins = round(1.5*(size(S,1))^(1/3)); 
+lim = 3*median(Sr{1}(Sr{1}<Inf));
+[counts, centers] = hist(S(S<lim),Nbins);
+counts_r = zeros(iter, Nbins);
+for j=1:iter
+	[counts_r(j,:), ~] = hist(Sr{j}(Sr{j}<lim),centers);
+end
+
+MeanCounts = mean(counts_r);
+StdCounts = std(counts_r);
+
+%ConfidenceInterval = [MeanCounts', (MeanCounts - z * StdCounts)', (MeanCounts + z * StdCounts)'];
+
+% plot random voronoi
+% [vx,vy]=voronoi(ABrand(:,4), ABrand(:,5));
+% plot(ABrand(:,4), ABrand(:,5), 'ro', vx, vy, 'b-', 'LineWidth', 1, 'MarkerSize', 6, 'MarkerFaceColor', 'r');
+% axis equal
+% xlim([0,500])
+% ylim([0,500])
+% set(gca, 'XTick', [0 100 200 300 400 500], 'YTick', [0 100 200 300 400 500], 'TickLength', [0.02,0.05], 'FontSize', 14, 'YDir', 'reverse');
+% 
+% print('VorDiagr_rand.tif', '-dtiff', '-r300');
+%
+% figure; plot(centers, counts, centers, MeanCounts + 1.96*StdCounts, '--m', centers, MeanCounts, '-.g', centers, MeanCounts - 1.96*StdCounts, '--m', 'LineWidth', 1.5);
+% xlim([0,4100])
+% ylim([0,400])
+% set(gca, 'XTick', [0 1000 2000 3000 4000], 'YTick', [0 100 200 300 400], 'TickLength', [0.02,0.05], 'FontSize', 14);
+% legend('Data', 'Confidence envelope', 'Mean of random data');
+%
+%print('curves.tif', '-dtiff', '-r300');
+
+% find intersection
+% [xi, yi] = polyxpoly(centers, counts, centers, MeanCounts);
+% intersection = [xi, yi];
+
+Histograms = [centers', counts', MeanCounts', (MeanCounts - z * StdCounts)', (MeanCounts + z * StdCounts)'];
+ind = find((counts - MeanCounts)<0,1);
+[xi, yi] = intersection ([centers(ind-1), centers(ind)], [counts(ind-1), counts(ind)], [centers(ind-1), centers(ind)], [MeanCounts(ind-1), MeanCounts(ind)]);
+inters = [xi, yi];
+close(h);
+else
+    Histograms = [centers', counts'];
+%     intersection = [0, 0];
+inters = [];
+end
+
+
+function [xi, yi] = intersection (x1, y1, x2, y2)
+% y = a*x + b;
+a1 = (y1(2) - y1(1)) / (x1(2) - x1(1));
+a2 = (y2(2) - y2(1)) / (x2(2) - x2(1));
+b1 = y1(1) - a1 * x1(1);
+b2 = y2(1) - a2 * x2(1);
+xi = (b2 - b1) / (a1 - a2);
+yi = a1 * xi + b1;
